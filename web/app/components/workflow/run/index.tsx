@@ -3,12 +3,9 @@ import type { FC } from 'react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useContext } from 'use-context-selector'
 import { useTranslation } from 'react-i18next'
-import { useBoolean } from 'ahooks'
-import { BlockEnum } from '../types'
 import OutputPanel from './output-panel'
 import ResultPanel from './result-panel'
 import TracingPanel from './tracing-panel'
-import IterationResultPanel from './iteration-result-panel'
 import cn from '@/utils/classnames'
 import { ToastContext } from '@/app/components/base/toast'
 import Loading from '@/app/components/base/loading'
@@ -16,7 +13,6 @@ import { fetchRunDetail, fetchTracingList } from '@/service/log'
 import type { NodeTracing } from '@/types/workflow'
 import type { WorkflowRunDetailResponse } from '@/models/log'
 import { useStore as useAppStore } from '@/app/components/app/store'
-
 export type RunProps = {
   hideResult?: boolean
   activeTab?: 'RESULT' | 'DETAIL' | 'TRACING'
@@ -59,77 +55,12 @@ const RunPanel: FC<RunProps> = ({ hideResult, activeTab = 'RESULT', runID, getRe
     }
   }, [notify, getResultCallback])
 
-  const formatNodeList = useCallback((list: NodeTracing[]) => {
-    const allItems = [...list].reverse()
-    const result: NodeTracing[] = []
-    const groupMap = new Map<string, NodeTracing[]>()
-
-    const processIterationNode = (item: NodeTracing) => {
-      result.push({
-        ...item,
-        details: [],
-      })
-    }
-    const updateParallelModeGroup = (runId: string, item: NodeTracing, iterationNode: NodeTracing) => {
-      if (!groupMap.has(runId))
-        groupMap.set(runId, [item])
-      else
-        groupMap.get(runId)!.push(item)
-      if (item.status === 'failed') {
-        iterationNode.status = 'failed'
-        iterationNode.error = item.error
-      }
-
-      iterationNode.details = Array.from(groupMap.values())
-    }
-    const updateSequentialModeGroup = (index: number, item: NodeTracing, iterationNode: NodeTracing) => {
-      const { details } = iterationNode
-      if (details) {
-        if (!details[index])
-          details[index] = [item]
-        else
-          details[index].push(item)
-      }
-
-      if (item.status === 'failed') {
-        iterationNode.status = 'failed'
-        iterationNode.error = item.error
-      }
-    }
-    const processNonIterationNode = (item: NodeTracing) => {
-      const { execution_metadata } = item
-      if (!execution_metadata?.iteration_id) {
-        result.push(item)
-        return
-      }
-
-      const iterationNode = result.find(node => node.node_id === execution_metadata.iteration_id)
-      if (!iterationNode || !Array.isArray(iterationNode.details))
-        return
-
-      const { parallel_mode_run_id, iteration_index = 0 } = execution_metadata
-
-      if (parallel_mode_run_id)
-        updateParallelModeGroup(parallel_mode_run_id, item, iterationNode)
-      else
-        updateSequentialModeGroup(iteration_index, item, iterationNode)
-    }
-
-    allItems.forEach((item) => {
-      item.node_type === BlockEnum.Iteration
-        ? processIterationNode(item)
-        : processNonIterationNode(item)
-    })
-
-    return result
-  }, [])
-
   const getTracingList = useCallback(async (appID: string, runID: string) => {
     try {
       const { data: nodeList } = await fetchTracingList({
         url: `/apps/${appID}/workflow-runs/${runID}/node-executions`,
       })
-      setList(formatNodeList(nodeList))
+      setList(nodeList)
     }
     catch (err) {
       notify({
@@ -171,29 +102,6 @@ const RunPanel: FC<RunProps> = ({ hideResult, activeTab = 'RESULT', runID, getRe
     adjustResultHeight()
   }, [loading])
 
-  const [iterationRunResult, setIterationRunResult] = useState<NodeTracing[][]>([])
-  const [isShowIterationDetail, {
-    setTrue: doShowIterationDetail,
-    setFalse: doHideIterationDetail,
-  }] = useBoolean(false)
-
-  const handleShowIterationDetail = useCallback((detail: NodeTracing[][]) => {
-    setIterationRunResult(detail)
-    doShowIterationDetail()
-  }, [doShowIterationDetail])
-
-  if (isShowIterationDetail) {
-    return (
-      <div className='grow relative flex flex-col'>
-        <IterationResultPanel
-          list={iterationRunResult}
-          onHide={doHideIterationDetail}
-          onBack={doHideIterationDetail}
-        />
-      </div>
-    )
-  }
-
   return (
     <div className='grow relative flex flex-col'>
       {/* tab */}
@@ -223,7 +131,7 @@ const RunPanel: FC<RunProps> = ({ hideResult, activeTab = 'RESULT', runID, getRe
         >{t('runLog.tracing')}</div>
       </div>
       {/* panel detail */}
-      <div ref={ref} className={cn('grow bg-components-panel-bg h-0 overflow-y-auto rounded-b-2xl', currentTab !== 'DETAIL' && '!bg-background-section-burn')}>
+      <div ref={ref} className={cn('relative grow bg-components-panel-bg h-0 overflow-y-auto rounded-b-2xl')}>
         {loading && (
           <div className='flex h-full items-center justify-center bg-components-panel-bg'>
             <Loading />
@@ -247,13 +155,13 @@ const RunPanel: FC<RunProps> = ({ hideResult, activeTab = 'RESULT', runID, getRe
             created_at={runDetail.created_at}
             created_by={executor}
             steps={runDetail.total_steps}
+            exceptionCounts={runDetail.exceptions_count}
           />
         )}
         {!loading && currentTab === 'TRACING' && (
           <TracingPanel
             className='bg-background-section-burn'
             list={list}
-            onShowIterationDetail={handleShowIterationDetail}
           />
         )}
       </div>
